@@ -1,0 +1,144 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: vnext-local-manager
+  labels:
+    app: vnext-local-manager
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: vnext-infra
+  labels:
+    app: vnext-infra
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: vnext-local-manager
+  namespace: vnext-local-manager
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: vnext-local-manager-namespace
+rules:
+  - apiGroups: ["*"]
+    resources: ["*"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: vnext-local-manager-namespace
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: vnext-local-manager-namespace
+subjects:
+  - kind: ServiceAccount
+    name: vnext-local-manager
+    namespace: vnext-local-manager
+---
+# PAT ve kalıcı veriler için (pod restart'ta korunur)
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: vnext-local-manager-data
+  namespace: vnext-local-manager
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vnext-local-manager
+  namespace: vnext-local-manager
+  labels:
+    app: vnext-local-manager
+spec:
+  type: NodePort
+  ports:
+    - name: http
+      port: 80
+      targetPort: 3000
+      nodePort: 30800
+      protocol: TCP
+  selector:
+    app: vnext-local-manager
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vnext-local-manager
+  namespace: vnext-local-manager
+  labels:
+    app: vnext-local-manager
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: vnext-local-manager
+  template:
+    metadata:
+      labels:
+        app: vnext-local-manager
+    spec:
+      securityContext:
+        fsGroup: 1000
+      serviceAccountName: vnext-local-manager
+      automountServiceAccountToken: true
+      containers:
+        - name: app
+          image: ghcr.io/burgan-tech/vnext-release-viewer:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 3000
+          env:
+            - name: PORT
+              value: "3000"
+            - name: PAT_DATA_DIR
+              value: "/app/data"
+            - name: HOME
+              value: "/tmp"
+            - name: HELM_CHART_REPO
+              value: "oci://ghcr.io/burgan-tech/charts/vnext"
+            - name: NPM_REGISTRY
+              value: "https://registry.npmjs.org/"
+            - name: NPM_EMAIL
+              value: "vnext-user@example.com"
+            - name: NPM_USERNAME
+              value: "vnext-user"
+            - name: ADMIN_PAGE_ENABLED
+              value: "true"
+          volumeMounts:
+            - name: data
+              mountPath: /app/data
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "2Gi"
+              cpu: "1000m"
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: vnext-local-manager-data

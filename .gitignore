@@ -1,0 +1,8 @@
+node_modules/
+viewer/node_modules/
+viewer/dist/
+data/
+.env
+*.log
+.DS_Store
+npm-debug.log*

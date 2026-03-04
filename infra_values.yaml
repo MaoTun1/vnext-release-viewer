@@ -1,0 +1,85 @@
+global:
+  appDomain: "infra"
+  
+  resources:
+    default:
+      limits:
+        cpu: 1000m     
+        memory: 1Gi    
+      requests:
+        cpu: 16m       
+        memory: 64Mi   
+
+orchestrator:
+  enabled: false
+
+execution:
+  enabled: false
+
+worker-inbox:
+  enabled: false
+
+worker-outbox:
+  enabled: false
+
+vault:
+  enabled: true
+  server:
+    secretShares: 1
+    secretThreshold: 1
+    service:
+      type: NodePort
+
+dapr:
+  enabled: true
+
+redis-sentinel:
+  enabled: true
+  replicaCount: 1
+
+redisInsight:
+  enabled: true
+  service:
+    type: NodePort
+
+pgAdmin:
+  enabled: true
+  auth:
+    email: "admin@example.com"
+    password: "admin"
+  service:
+    type: NodePort
+
+mockoon:
+  enabled: false
+
+openobserve:
+  enabled: true
+  auth:
+    username: "admin@example.com"
+    password: "admin"  
+  service:
+    type: NodePort
+
+opentelemetry-collector:
+  enabled: true
+
+kube-prometheus-stack:
+  enabled: false
+  grafana:
+    adminUser: admin
+    adminPassword: admin
+    
+dapr-dashboard:
+  enabled: true
+  serviceType: NodePort
+
+postgres:
+  enabled: true
+  replicaCount: 1  
+  auth:
+    username: "admin"
+    password: "admin"
+    database: "vNext_Infra"
+  service:
+    type: NodePort

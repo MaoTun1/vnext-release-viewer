@@ -1,0 +1,161 @@
+global:
+  appDomain: "APP_DOMAIN"
+  externalVault: 
+    enabled: true
+    address: "http://vnext-infra-vault.vnext-infra.svc.cluster.local:8200"
+    secretEngineName: "vnext-APP_DOMAIN-engine"
+  
+  dotnetEnv:
+    DOTNET_NUGET_SIGNATURE_VERIFICATION: "false"
+    DOTNET_USE_POLLING_FILE_WATCHER: "1"
+    DOTNET_RUNNING_IN_CONTAINER: "true"
+    DOTNET_SYSTEM_GLOBALIZATION_INVARIANT: "1"
+    ASPNETCORE_ENVIRONMENT: "Development"
+
+  # Application-specific configuration
+  # These environment variables configure the vNext application behavior
+  # Example:
+  #   appEnvConfig:
+  #     MY_CUSTOM_VAR: "value"
+  #     ANOTHER_VAR: "another-value"
+  appEnvConfig: {}
+
+  externalRedis:
+    endpoint: "vnext-infra-redis-sentinel.vnext-infra.svc.cluster.local:6379"
+
+  dapr:
+    enabled: true
+  
+  telemetry:
+    enabled: true
+    external:
+      enabled: true
+      endpoint: "http://vnext-infra-opentelemetry-collector.vnext-infra.svc.cluster.local:4317"
+    protocol: "grpc"
+    logging:
+      minLevel: "Info"
+      providers: "otlp,console"
+  
+  resources:
+    default:
+      limits:
+        cpu: 1000m      # 1 CPU core
+        memory: 2Gi     # 1 gigabyte of RAM
+      requests:
+        cpu: 100m       # 0.1 CPU core
+        memory: 256Mi   # 256 megabytes of RAM
+
+orchestrator:
+  enabled: true
+  replicaCount: 1
+  service:
+    type: NodePort
+  
+  ingress:
+    enabled: false
+  
+  initializer:
+    enabled: true
+    image:
+      repository: ghcr.io/burgan-tech/vnext/init
+      tag: ""
+    service:
+      type: ClusterIP
+      port: 3000
+    envConfig:
+      NPM_REGISTRY: "https://registry.npmjs.org/"
+    ingress:
+      enabled: false
+  
+  # Additional custom environment variables
+  # These will be added to the service's ConfigMap
+  # Example:
+  #   extraEnvConfig:
+  #     MY_CUSTOM_VAR: "value"
+  #     ANOTHER_VAR: "another-value"
+  extraEnvConfig: {}
+  
+  # Application-specific configuration
+  # These environment variables configure the vNext application behavior
+  appEnvConfig:
+    Vault__Enabled: "true"
+    Logging__LogLevel__Default: "Information"
+    SignalR__AppId: "http://localhost:6203"
+
+execution:
+  enabled: true
+  replicaCount: 1
+
+  extraEnvConfig: {}
+  
+  appEnvConfig:
+    Vault__Enabled: "true"
+    Logging__LogLevel__Default: "Information"
+
+worker-inbox:
+  enabled: true
+  replicaCount: 1
+  
+  # Additional custom environment variables
+  # These will be added to the service's ConfigMap
+  # Example:
+  #   extraEnvConfig:
+  #     MY_CUSTOM_VAR: "value"
+  #     ANOTHER_VAR: "another-value"
+  extraEnvConfig: {}
+  
+  appEnvConfig:
+    Vault__Enabled: "true"
+    Logging__LogLevel__Default: "Information"
+    SignalR__AppId: "http://localhost:6203"
+
+worker-outbox:
+  enabled: true
+  replicaCount: 1
+  
+  # Additional custom environment variables
+  # These will be added to the service's ConfigMap
+  # Example:
+  #   extraEnvConfig:
+  #     MY_CUSTOM_VAR: "value"
+  #     ANOTHER_VAR: "another-value"
+  extraEnvConfig: {}
+  
+  appEnvConfig:
+    Vault__Enabled: "true"
+    Logging__LogLevel__Default: "Information"
+    SignalR__AppId: "http://localhost:6203"
+
+vault:
+  enabled: false
+
+dapr:
+  enabled: false
+
+redis-sentinel:
+  enabled: false
+
+redisInsight:
+  enabled: false
+
+pgAdmin:
+  enabled: false
+
+mockoon:
+  enabled: false
+
+openobserve:
+  enabled: false
+
+opentelemetry-collector:
+  enabled: false
+
+kube-prometheus-stack:
+  enabled: false
+
+dapr-dashboard:
+  enabled: false
+
+postgres:
+  enabled: false 
+
