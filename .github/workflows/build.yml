@@ -1,0 +1,317 @@
+name: Ultimate Security Scan & Deploy
+
+on:
+  push:
+    branches:
+      - master
+      - main
+      - develop
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  security-scan:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # -------------------------------------------------
+      # ORTAM KURULUMLARI (Node.js & .NET)
+      # -------------------------------------------------
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            8.0.x
+            9.0.x
+            10.0.x
+
+      # -------------------------------------------------
+      # GITLEAKS & SEMGREP CLI KURULUMLARI
+      # -------------------------------------------------
+      - name: Install Tools (Gitleaks & Semgrep)
+        run: |
+          mkdir -p public
+          # Gitleaks Kurulumu
+          wget https://github.com/gitleaks/gitleaks/releases/download/v8.18.2/gitleaks_8.18.2_linux_x64.tar.gz
+          tar -xf gitleaks_8.18.2_linux_x64.tar.gz
+          sudo mv gitleaks /usr/local/bin/
+          # Semgrep Kurulumu
+          pip install semgrep
+
+      # -------------------------------------------------
+      # FIND SOLUTION & RESTORE
+      # -------------------------------------------------
+      - name: Find solution file
+        id: find_sln
+        shell: bash
+        run: |
+          SLN_FILE=$(find . -name "*.sln" | head -n 1)
+          if [ -z "$SLN_FILE" ]; then
+            echo "sln_exists=false" >> $GITHUB_OUTPUT
+          else
+            echo "sln_exists=true" >> $GITHUB_OUTPUT
+            echo "sln_file=$SLN_FILE" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Restore dependencies
+        if: steps.find_sln.outputs.sln_exists == 'true'
+        continue-on-error: true
+        run: |
+          dotnet restore "${{ steps.find_sln.outputs.sln_file }}" --use-lock-file
+          if [ -f package.json ]; then npm install --package-lock-only; fi
+
+      # -------------------------------------------------
+      # BUILD
+      # -------------------------------------------------
+      - name: Build solution
+        if: steps.find_sln.outputs.sln_exists == 'true'
+        continue-on-error: true
+        run: |
+          dotnet build "${{ steps.find_sln.outputs.sln_file }}" --configuration Release --no-restore "/p:TreatWarningsAsErrors=false" "/p:NoWarn=1573;1591;0618;0612"
+
+      # -------------------------------------------------
+      # SEMGREP (Text Raporu)
+      # -------------------------------------------------
+      - name: Run Semgrep SAST
+        continue-on-error: true
+        run: |
+          semgrep scan --config auto --text --output public/semgrep-report.txt || true
+
+      # -------------------------------------------------
+      # GITLEAKS (Text Raporu)
+      # -------------------------------------------------
+      - name: Run Gitleaks Secrets Scan
+        continue-on-error: true
+        run: |
+          gitleaks detect --source=. --verbose > public/gitleaks-report.txt || true
+
+      # -------------------------------------------------
+      # TRUFFLEHOG (Text Raporu)
+      # -------------------------------------------------
+      - name: Run TruffleHog
+        continue-on-error: true
+        run: |
+          docker run --rm \
+            -v "$PWD:/repo" \
+            ghcr.io/trufflesecurity/trufflehog:latest \
+            filesystem /repo \
+            --only-verified=false > public/trufflehog-report.txt || true
+
+      # -------------------------------------------------
+      # TRIVY FS SCAN -> TEXT RAPORU
+      # -------------------------------------------------
+      - name: Run Trivy Filesystem Scan
+        uses: aquasecurity/trivy-action@master
+        continue-on-error: true
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'table'
+          output: 'public/trivy-fs-report.txt'
+          severity: 'CRITICAL,HIGH,MEDIUM'
+          ignore-unfixed: true
+          exit-code: '0'
+
+      # -------------------------------------------------
+      # TRIVY: GENERATE SBOM
+      # -------------------------------------------------
+      - name: Generate SBOM using Trivy
+        uses: aquasecurity/trivy-action@master
+        continue-on-error: true
+        with:
+          scan-type: 'fs'
+          format: 'cyclonedx'
+          output: 'public/sbom.json'
+
+      # -------------------------------------------------
+      # TRIVY: SCAN GENERATED SBOM -> TEXT RAPORU
+      # -------------------------------------------------
+      - name: Scan Generated SBOM using Trivy
+        uses: aquasecurity/trivy-action@master
+        continue-on-error: true
+        with:
+          scan-type: 'sbom'
+          scan-ref: 'public/sbom.json'
+          format: 'table'
+          output: 'public/trivy-sbom-report.txt'
+          severity: 'CRITICAL,HIGH'
+          exit-code: '0'
+
+      # -------------------------------------------------
+      # MERKEZİ HTML PANELİ OLUŞTURMA (Görsel İyileştirme)
+      # -------------------------------------------------
+      - name: Generate Centralized HTML Dashboard
+        if: always()
+        shell: bash
+        run: |
+          cat << 'EOF' > public/generate_html.py
+          import os
+          import html
+
+          report_dir = "."
+          files_to_load = {
+              "Trivy Genel": "trivy-fs-report.txt",
+              "Trivy SBOM": "trivy-sbom-report.txt",
+              "Semgrep SAST": "semgrep-report.txt",
+              "Gitleaks": "gitleaks-report.txt",
+              "TruffleHog": "trufflehog-report.txt"
+          }
+
+          html_content = """<!DOCTYPE html>
+          <html lang="tr">
+          <head>
+              <meta charset="UTF-8">
+              <meta name="viewport" content="width=device-width, initial-scale=1.0">
+              <title>Merkezi Güvenlik Tarama Raporu</title>
+              <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+              <style>
+                  /* Sayfanın dikey kaymasını engellemek ve tam ekran yapmak için ana yapıyı kuruyoruz */
+                  html, body { height: 100%; margin: 0; padding: 0; background-color: #f1f3f5; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; overflow: hidden; }
+                  
+                  /* Tüm yapıyı yatay ve dikey esnek bir flexbox yapıyoruz */
+                  .main-wrapper { display: flex; flex-direction: column; height: 100vh; }
+                  
+                  .header-banner { background: linear-gradient(135deg, #112233 0%, #1a365d 100%); color: white; padding: 15px 25px; margin: 0; border-bottom: 2px solid #0d6efd; }
+                  
+                  .content-layout { display: flex; flex: 1; overflow: hidden; }
+                  
+                  /* Sol menüyü sabit genişlikte tutuyoruz, asla daralmaz */
+                  .sidebar-menu { width: 220px; background: white; border-right: 1px solid #dee2e6; padding: 15px; overflow-y: auto; flex-shrink: 0; }
+                  .nav-pills .nav-link { color: #495057; font-weight: 500; margin-bottom: 5px; text-align: left; }
+                  .nav-pills .nav-link.active { background-color: #0d6efd; }
+                  
+                  /* Sağ rapor penceresini ana tarayıcı penceresi gibi bağımsız bir alana çeviriyoruz */
+                  .report-view { flex-grow: 1; padding: 20px; overflow: auto; background-color: #f8f9fa; }
+                  .tab-content, .tab-pane { height: 100%; }
+                  
+                  /* SİYAH ÇERÇEVEYİ DEVASA BÜYÜTÜYORUZ */
+                  .report-wrapper {
+                      width: 100%;
+                      background: #1e1e1e;
+                      border-radius: 8px;
+                      padding: 25px;
+                      box-shadow: inset 0 0 10px rgba(0,0,0,0.5);
+                      overflow-x: auto; /* Tablo çok genişse çerçeve içinde kayar */
+                      overflow-y: auto;
+                  }
+                  
+                  /* YAZILARIN BİRBİRİNE GİRMESİNİ ENGELLEYEN KRİTİK ALAN */
+                  .report-container { 
+                      color: #e0e0e0; 
+                      font-family: "Consolas", "Courier New", Courier, monospace; 
+                      font-size: 13px;
+                      line-height: 1.5;
+                      white-space: pre; /* Kelime kaydırmayı tamamen kapatır */
+                      display: block;
+                      /* Yazıların büzüşmemesi için tabloya devasa bir alt taban genişliği dayatıyoruz */
+                      min-width: 1600px; 
+                      margin: 0;
+                  }
+              </style>
+          </head>
+          <body>
+          <div class="main-wrapper">
+              <div class="header-banner">
+                  <h1 class="h4 fw-bold mb-0">🛡️ DevSecOps Merkezi Güvenlik Paneli</h1>
+                  <p class="small text-white-50 mb-0">Tüm güvenlik araçlarının raporları terminal formatında aslına uygun birleştirildi.</p>
+              </div>
+              
+              <div class="content-layout">
+                  <div class="sidebar-menu">
+                      <div class="nav flex-column nav-pills" id="v-pills-tab" role="tablist" aria-orientation="vertical">
+          """
+
+          first = True
+          for idx, (name, filename) in enumerate(files_to_load.items()):
+              active_class = "active" if first else ""
+              html_content += f'<button class="nav-link {active_class}" id="v-pills-{idx}-tab" data-bs-toggle="pill" data-bs-target="#v-pills-{idx}" type="button" role="tab">{name}</button>\n'
+              first = False
+
+          html_content += """
+                      </div>
+                  </div>
+                  
+                  <div class="report-view">
+                      <div class="tab-content" id="v-pills-tabContent">
+          """
+
+          first = True
+          for idx, (name, filename) in enumerate(files_to_load.items()):
+              active_class = "show active" if first else ""
+              file_path = os.path.join(report_dir, filename)
+              
+              content = "Bu araç için rapor çıktısı bulunamadı."
+              if os.path.exists(file_path):
+                  with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+                      content = f.read().strip()
+                      if not content:
+                          content = "Tarama tamamlandı, herhangi bir bulguya rastlanmadı."
+
+              escaped_content = html.escape(content)
+              html_content += f"""
+              <div class="tab-pane fade {active_class}" id="v-pills-{idx}" role="tabpanel">
+                  <h3 class="h5 mb-3 text-dark fw-bold">{name} Analiz Raporu</h3>
+                  <div class="report-wrapper">
+                      <pre class="report-container">{escaped_content}</pre>
+                  </div>
+              </div>
+              """
+              first = False
+
+          html_content += """
+                      </div>
+                  </div>
+              </div>
+          </div>
+          <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+          </body>
+          </html>
+          """
+
+          with open("index.html", "w", encoding="utf-8") as f:
+              f.write(html_content)
+          EOF
+          
+          cd public && python3 generate_html.py
+
+      # -------------------------------------------------
+      # LINKI SUMMARY EKRANINA YAZDIRMA
+      # -------------------------------------------------
+      - name: Output Live Rapor Link
+        if: always()
+        run: |
+          LOWCASE_USER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          REPO_NAME=$(echo "${{ github.event.repository.name }}")
+          echo "### 🚀 Güvenlik Raporu Arayüzü Tamamen Yenilendi!" >> $GITHUB_STEP_SUMMARY
+          echo "Tablo büzüşme problemi giderildi. Aşağıdaki linkten tam çözünürlüklü rapora erişebilirsiniz:" >> $GITHUB_STEP_SUMMARY
+          echo "🔗 **[Güvenlik Raporu Panelini Aç](https://${LOWCASE_USER}.github.io/${REPO_NAME}/)**" >> $GITHUB_STEP_SUMMARY
+
+      # -------------------------------------------------
+      # GITHUB PAGES YAYINLAMA
+      # -------------------------------------------------
+      - name: Setup Pages
+        if: always()
+        uses: actions/configure-pages@v5
+
+      - name: Upload artifact for Pages
+        if: always()
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: 'public'
+
+      - name: Deploy to GitHub Pages
+        if: always()
+        uses: actions/deploy-pages@v4
